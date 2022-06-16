@@ -11,8 +11,8 @@
 #define MATRIX_HEIGHT 8
 #define NUM_LEDS MATRIX_WIDTH* MATRIX_HEIGHT
 
-#define MAX_FRAMES 40
-#define RECV_BUFFER_SIZE (MAX_FRAMES * (NUM_LEDS*3 + 4)) + 1 // 1 byte for num frames, then, PER FRAME: (64 pixels * R,G,B) + 4 bytes for duration
+#define MAX_FRAMES 50
+#define RECV_BUFFER_SIZE (MAX_FRAMES * (NUM_LEDS * 3 + 4)) + 1  // 1 byte for num frames, then, PER FRAME: (64 pixels * R,G,B) + 4 bytes for duration
 
 struct AnimationFrame {
     uint8_t frameData[NUM_LEDS * 3] = {0};
@@ -81,9 +81,9 @@ void setAllLEDs(CRGB c, CRGB* strip, uint16_t numLeds) {
 void setup() {
     Serial.begin(115200);
 
-    FastLED.addLeds<WS2812B, WORD_LEDS_PIN, GRB>(_leds, NUM_LEDS).setCorrection(TypicalLEDStrip);  // don't add FastLED's "typical LED" correction; it makes the whites pink-ish
-    FastLED.setMaxPowerInVoltsAndMilliamps(5, 300);
-    FastLED.setBrightness(50);
+    FastLED.addLeds<WS2812B, WORD_LEDS_PIN, GRB>(_leds, NUM_LEDS);
+    FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
+    FastLED.setBrightness(255);
     setAllLEDs(CRGB::Black, _leds, NUM_LEDS);
     FastLED.show();
 
@@ -115,6 +115,193 @@ void setup() {
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "*");
+
+    server.on(
+        "/brightness",
+        HTTP_ANY,
+        [](AsyncWebServerRequest* request) {
+            if (request->method() == HTTP_OPTIONS) {
+                request->send(200);
+                return;
+            } else {
+                request->send(405);
+                return;
+            }
+        },
+        NULL,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (request->method() != HTTP_PUT) {
+                request->send(405);
+                return;
+            }
+
+            if (total == 0) {
+                request->send(400);
+                return;
+            }
+
+            request->send(200);
+            
+            char input[4] = {0};
+            strncpy(input, (char*) data, 3);
+            uint8_t val = atoi(input);
+            Serial.print("Setting brightness: "); Serial.println(val);
+            FastLED.setBrightness(val);
+            FastLED.show();
+        });
+
+    server.on(
+        "/correction",
+        HTTP_ANY,
+        [](AsyncWebServerRequest* request) {
+            if (request->method() == HTTP_OPTIONS) {
+                request->send(200);
+                return;
+            } else {
+                request->send(405);
+                return;
+            }
+        },
+        NULL,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (request->method() != HTTP_PUT) {
+                request->send(405);
+                return;
+            }
+
+            if (total == 0) {
+                request->send(400);
+                return;
+            }
+
+            request->send(200);
+
+            char input[4] = {0};
+            strncpy(input, (char*) data, 3);
+            uint8_t val = atoi(input);
+            Serial.print("Setting correction: "); Serial.println(val);
+
+            CRGB correction;
+            switch (val) {
+                case 0:
+                    correction = UncorrectedColor;
+                    break;
+                case 1:
+                    correction = TypicalSMD5050;
+                    break;
+                case 2:
+                    correction = TypicalLEDStrip;
+                    break;
+                case 3:
+                    correction = Typical8mmPixel;
+                    break;
+                case 4:
+                    correction = TypicalPixelString;
+                    break;
+            };
+
+            FastLED.setCorrection(correction);
+            FastLED.show();
+        });
+
+    server.on(
+        "/temperature",
+        HTTP_ANY,
+        [](AsyncWebServerRequest* request) {
+            if (request->method() == HTTP_OPTIONS) {
+                request->send(200);
+                return;
+            } else {
+                request->send(405);
+                return;
+            }
+        },
+        NULL,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (request->method() != HTTP_PUT) {
+                request->send(405);
+                return;
+            }
+
+            if (total == 0) {
+                request->send(400);
+                return;
+            }
+
+            request->send(200);
+
+            char input[4] = {0};
+            strncpy(input, (char*) data, 3);
+            uint8_t val = atoi(input);
+            Serial.print("Setting temperature: "); Serial.println(val);
+
+            CRGB temperature;
+            switch (val) {
+                case 0:
+                    temperature = UncorrectedTemperature;
+                    break;
+                case 1:
+                    temperature = Candle;
+                    break;
+                case 2:
+                    temperature = Tungsten40W;
+                    break;
+                case 3:
+                    temperature = Tungsten100W;
+                    break;
+                case 4:
+                    temperature = Halogen;
+                    break;
+                case 5:
+                    temperature = CarbonArc;
+                    break;
+                case 6:
+                    temperature = HighNoonSun;
+                    break;
+                case 7:
+                    temperature = DirectSunlight;
+                    break;
+                case 8:
+                    temperature = OvercastSky;
+                    break;
+                case 9:
+                    temperature = ClearBlueSky;
+                    break;
+                case 10:
+                    temperature = WarmFluorescent;
+                    break;
+                case 11:
+                    temperature = StandardFluorescent;
+                    break;
+                case 12:
+                    temperature = CoolWhiteFluorescent;
+                    break;
+                case 13:
+                    temperature = FullSpectrumFluorescent;
+                    break;
+                case 14:
+                    temperature = GrowLightFluorescent;
+                    break;
+                case 15:
+                    temperature = BlackLightFluorescent;
+                    break;
+                case 16:
+                    temperature = MercuryVapor;
+                    break;
+                case 17:
+                    temperature = SodiumVapor;
+                    break;
+                case 18:
+                    temperature = MetalHalide;
+                    break;
+                case 19:
+                    temperature = HighPressureSodium;
+                    break;
+            };
+
+            FastLED.setTemperature(temperature);
+            FastLED.show();
+        });
 
     server.on(
         "/icon",
@@ -177,7 +364,7 @@ void displayFrame(uint8_t frameIdx) {
 void loop() {
     static uint8_t currentFrame = 0;
     static bool alreadyCleared = false;
-    
+
     if (newData) {
         // ICON PROTOCOL DEFINITION:
         // byte 0: number of frames
@@ -191,8 +378,8 @@ void loop() {
         for (uint8_t frameIdx = 0; frameIdx < numFrames; ++frameIdx) {
             memcpy(&(iconData[frameIdx].duration), &(receiveBuffer[idx]), 4);
             idx += 4;
-            memcpy(iconData[frameIdx].frameData, &(receiveBuffer[idx]), 192);
-            idx += 192;
+            memcpy(iconData[frameIdx].frameData, &(receiveBuffer[idx]), 3 * NUM_LEDS);
+            idx += 3 * NUM_LEDS;
         }
 
         newData = false;
