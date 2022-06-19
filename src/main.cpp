@@ -5,11 +5,10 @@
 #include <FastLED.h>
 #include <WiFi.h>
 #include <WiFiProv.h>
+#include <tuple>
 
-#define WORD_LEDS_PIN 12
-#define MATRIX_WIDTH 8
-#define MATRIX_HEIGHT 8
-#define NUM_LEDS MATRIX_WIDTH* MATRIX_HEIGHT
+#include "settings.h"
+#include "wifiProvisioningEvent.h"
 
 #define MAX_FRAMES 50
 #define RECV_BUFFER_SIZE (MAX_FRAMES * (NUM_LEDS * 3 + 4)) + 1  // 1 byte for num frames, then, PER FRAME: (64 pixels * R,G,B) + 4 bytes for duration
@@ -30,44 +29,6 @@ CRGB _leds[NUM_LEDS];
 
 AsyncWebServer server(80);
 
-void SysProvEvent(arduino_event_t* sys_event) {
-    switch (sys_event->event_id) {
-        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-            Serial.print("\nConnected IP address : ");
-            Serial.println(IPAddress(sys_event->event_info.got_ip.ip_info.ip.addr));
-            break;
-        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            Serial.println("\nDisconnected. Connecting to the AP again...");
-            break;
-        case ARDUINO_EVENT_PROV_START:
-            Serial.println("\nProvisioning started\nProvide Wifi credentials with the ESP BLE Prov app");
-            break;
-        case ARDUINO_EVENT_PROV_CRED_RECV: {
-            Serial.println("\nReceived Wi-Fi credentials");
-            Serial.print("\tSSID: ");
-            Serial.println((const char*)sys_event->event_info.prov_cred_recv.ssid);
-            Serial.print("\tPassword: <REDACTED>");
-            break;
-        }
-        case ARDUINO_EVENT_PROV_CRED_FAIL: {
-            Serial.println("\nProvisioning failed!\nPlease reset to factory and retry provisioning\n");
-            if (sys_event->event_info.prov_fail_reason == WIFI_PROV_STA_AUTH_ERROR)
-                Serial.println("\nWi-Fi AP password incorrect");
-            else
-                Serial.println("\nWi-Fi AP not found....Add API \" nvs_flash_erase() \" before beginProvision()");
-            break;
-        }
-        case ARDUINO_EVENT_PROV_CRED_SUCCESS:
-            Serial.println("\nProvisioning Successful");
-            break;
-        case ARDUINO_EVENT_PROV_END:
-            Serial.println("\nProvisioning Ends");
-            break;
-        default:
-            break;
-    }
-}
-
 uint8_t xy(uint8_t x, uint8_t y) {
     return (y % 2 == 0) ? ((y + 1) * 8 - x - 1) : (y * 8 + x);
 }
@@ -76,6 +37,35 @@ void setAllLEDs(CRGB c, CRGB* strip, uint16_t numLeds) {
     for (uint16_t i = 0; i < numLeds; ++i) {
         strip[i] = c;
     }
+}
+
+void handleOptions(AsyncWebServerRequest* request) {
+    if (request->method() == HTTP_OPTIONS) {
+        request->send(200);
+        return;
+    } else {
+        request->send(405);
+        return;
+    }
+};
+
+std::tuple<bool, uint8_t> handlePut(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    if (request->method() != HTTP_PUT) {
+        request->send(405);
+        return {false, 0};
+    }
+
+    if (total == 0) {
+        request->send(400);
+        return {false, 0};
+    }
+
+    request->send(200);
+
+    char input[4] = {0};
+    strncpy(input, (char*)data, 3);
+    uint8_t val = atoi(input);
+    return {true, val};
 }
 
 void setup() {
@@ -94,10 +84,10 @@ void setup() {
         delay(50);
     }
 
-    if (!MDNS.begin("iconviewer")) {
+    if (!MDNS.begin(iconViewerDNSName)) {
         Serial.println("Error setting up MDNS responder!");
         while (1) {
-            delay(1000);
+            delay(50);
         }
     }
     Serial.println("mDNS responder started");
@@ -119,33 +109,16 @@ void setup() {
     server.on(
         "/brightness",
         HTTP_ANY,
-        [](AsyncWebServerRequest* request) {
-            if (request->method() == HTTP_OPTIONS) {
-                request->send(200);
-                return;
-            } else {
-                request->send(405);
-                return;
-            }
-        },
+        handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (request->method() != HTTP_PUT) {
-                request->send(405);
+            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            if (!res)
                 return;
-            }
 
-            if (total == 0) {
-                request->send(400);
-                return;
-            }
+            Serial.print("Setting brightness: ");
+            Serial.println(val);
 
-            request->send(200);
-            
-            char input[4] = {0};
-            strncpy(input, (char*) data, 3);
-            uint8_t val = atoi(input);
-            Serial.print("Setting brightness: "); Serial.println(val);
             FastLED.setBrightness(val);
             FastLED.show();
         });
@@ -153,153 +126,34 @@ void setup() {
     server.on(
         "/correction",
         HTTP_ANY,
-        [](AsyncWebServerRequest* request) {
-            if (request->method() == HTTP_OPTIONS) {
-                request->send(200);
-                return;
-            } else {
-                request->send(405);
-                return;
-            }
-        },
+        handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (request->method() != HTTP_PUT) {
-                request->send(405);
+            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            if (!res)
                 return;
-            }
 
-            if (total == 0) {
-                request->send(400);
-                return;
-            }
+            Serial.print("Setting correction: ");
+            Serial.println(val);
 
-            request->send(200);
-
-            char input[4] = {0};
-            strncpy(input, (char*) data, 3);
-            uint8_t val = atoi(input);
-            Serial.print("Setting correction: "); Serial.println(val);
-
-            CRGB correction;
-            switch (val) {
-                case 0:
-                    correction = UncorrectedColor;
-                    break;
-                case 1:
-                    correction = TypicalSMD5050;
-                    break;
-                case 2:
-                    correction = TypicalLEDStrip;
-                    break;
-                case 3:
-                    correction = Typical8mmPixel;
-                    break;
-                case 4:
-                    correction = TypicalPixelString;
-                    break;
-            };
-
-            FastLED.setCorrection(correction);
+            FastLED.setCorrection(correctionMap[val]);
             FastLED.show();
         });
 
     server.on(
         "/temperature",
         HTTP_ANY,
-        [](AsyncWebServerRequest* request) {
-            if (request->method() == HTTP_OPTIONS) {
-                request->send(200);
-                return;
-            } else {
-                request->send(405);
-                return;
-            }
-        },
+        handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (request->method() != HTTP_PUT) {
-                request->send(405);
+            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            if (!res)
                 return;
-            }
 
-            if (total == 0) {
-                request->send(400);
-                return;
-            }
+            Serial.print("Setting temperature: ");
+            Serial.println(val);
 
-            request->send(200);
-
-            char input[4] = {0};
-            strncpy(input, (char*) data, 3);
-            uint8_t val = atoi(input);
-            Serial.print("Setting temperature: "); Serial.println(val);
-
-            CRGB temperature;
-            switch (val) {
-                case 0:
-                    temperature = UncorrectedTemperature;
-                    break;
-                case 1:
-                    temperature = Candle;
-                    break;
-                case 2:
-                    temperature = Tungsten40W;
-                    break;
-                case 3:
-                    temperature = Tungsten100W;
-                    break;
-                case 4:
-                    temperature = Halogen;
-                    break;
-                case 5:
-                    temperature = CarbonArc;
-                    break;
-                case 6:
-                    temperature = HighNoonSun;
-                    break;
-                case 7:
-                    temperature = DirectSunlight;
-                    break;
-                case 8:
-                    temperature = OvercastSky;
-                    break;
-                case 9:
-                    temperature = ClearBlueSky;
-                    break;
-                case 10:
-                    temperature = WarmFluorescent;
-                    break;
-                case 11:
-                    temperature = StandardFluorescent;
-                    break;
-                case 12:
-                    temperature = CoolWhiteFluorescent;
-                    break;
-                case 13:
-                    temperature = FullSpectrumFluorescent;
-                    break;
-                case 14:
-                    temperature = GrowLightFluorescent;
-                    break;
-                case 15:
-                    temperature = BlackLightFluorescent;
-                    break;
-                case 16:
-                    temperature = MercuryVapor;
-                    break;
-                case 17:
-                    temperature = SodiumVapor;
-                    break;
-                case 18:
-                    temperature = MetalHalide;
-                    break;
-                case 19:
-                    temperature = HighPressureSodium;
-                    break;
-            };
-
-            FastLED.setTemperature(temperature);
+            FastLED.setTemperature(temperatureMap[val]);
             FastLED.show();
         });
 
@@ -332,7 +186,8 @@ void setup() {
                 return;
             }
 
-            // TODO: more error handling! bail if message too large, too small, etc. Without this, this is probably full of dangerous buffer overflows and UMRs etc.
+            // bail if message is too large
+            // TODO: also handle other error cases
             if (total > RECV_BUFFER_SIZE) {
                 request->send(413);
                 return;
@@ -366,12 +221,6 @@ void loop() {
     static bool alreadyCleared = false;
 
     if (newData) {
-        // ICON PROTOCOL DEFINITION:
-        // byte 0: number of frames
-        // bytes 1-4: 32 bit int duration of frame in ms
-        // bytes 5-192: 8x8x3 frame data (row major, 0 in top left, RGB (no alpha channel) color data for one frame)
-        // bytes 193-196: duration of next frame
-        // ... etc
         uint32_t idx = 0;
         numFrames = receiveBuffer[idx++];
 
