@@ -1,12 +1,19 @@
+
 #include <Arduino.h>
 #include <AsyncTCP.h>
+#include <CronAlarms.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <FastLED.h>
 #include <WiFi.h>
 #include <WiFiProv.h>
+#include <ezTime.h>
+#include <time.h>
+
+#include <string>
 #include <tuple>
 
+#include "LEDUtils.h"
 #include "settings.h"
 #include "wifiProvisioningEvent.h"
 
@@ -26,18 +33,8 @@ bool newData = false;
 bool isDataPresent = false;
 
 CRGB _leds[NUM_LEDS];
-
+Timezone tz;
 AsyncWebServer server(80);
-
-uint8_t xy(uint8_t x, uint8_t y) {
-    return (y % 2 == 0) ? ((y + 1) * 8 - x - 1) : (y * 8 + x);
-}
-
-void setAllLEDs(CRGB c, CRGB* strip, uint16_t numLeds) {
-    for (uint16_t i = 0; i < numLeds; ++i) {
-        strip[i] = c;
-    }
-}
 
 void handleOptions(AsyncWebServerRequest* request) {
     if (request->method() == HTTP_OPTIONS) {
@@ -92,6 +89,21 @@ void setup() {
     }
     Serial.println("mDNS responder started");
 
+    String timezone = "America/New_York";
+    tz.setLocation(timezone);
+
+    waitForSync();
+    struct tm tm_newtime;
+    tm_newtime.tm_year = tz.year() - 1900;
+    tm_newtime.tm_mon = tz.month() - 1;
+    tm_newtime.tm_mday = tz.day();
+    tm_newtime.tm_hour = tz.hour();
+    tm_newtime.tm_min = tz.minute();
+    tm_newtime.tm_sec = tz.second();
+    tm_newtime.tm_isdst = tz.isDST();
+    timeval tv = {mktime(&tm_newtime), 0};
+    settimeofday(&tv, nullptr);
+
     for (uint8_t idx = 0; idx < 64; ++idx) {
         setAllLEDs(CRGB::Black, _leds, NUM_LEDS);
         _leds[idx] = CRGB::Red;
@@ -102,9 +114,67 @@ void setup() {
     setAllLEDs(CRGB::Black, _leds, NUM_LEDS);
     FastLED.show();
 
+    pinMode(0, INPUT);
+
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "*");
+
+    server.on(
+        "/cron",
+        HTTP_ANY,
+        [](AsyncWebServerRequest* request) {
+            if (request->method() == HTTP_OPTIONS) {
+                request->send(200);
+                return;
+            } else if (request->method() == HTTP_DELETE) {
+                Serial.println("IMPLEMENT ME: DELETE /cron");
+                request->send(200);
+                return;
+            } else {
+                request->send(405);
+                return;
+            }
+        },
+        NULL,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            Serial.print("Body handler; length: ");
+            Serial.print(len);
+            Serial.print("; index: ");
+            Serial.print(index);
+            Serial.print("; total: ");
+            Serial.println(total);
+            if (request->method() == HTTP_PUT) {
+                if (total == 0) {
+                    request->send(400);
+                    return;
+                }
+
+                request->send(200);
+
+                char input[100] = {0};
+                strncpy(input, (char*)data, 99);
+                std::string cronString(input);
+                auto lastSpace = cronString.rfind(" ");
+                auto cron = cronString.substr(0, lastSpace);
+                auto iconID = cronString.substr(lastSpace + 1);
+
+                Serial.print("Cron: ");
+                Serial.print(cron.c_str());
+                Serial.print("; iconID: ");
+                Serial.println(iconID.c_str());
+
+                Cron.create(const_cast<char*>(cron.c_str()), []() {
+                    Serial.println("Yay!!!!");
+                }, false);
+            } else if (request->method() == HTTP_POST) {
+                request->send(200);
+                Serial.println("IMPLEMENT ME: POST /cron");
+            } else {
+                request->send(405);
+                return;
+            }
+        });
 
     server.on(
         "/brightness",
@@ -112,7 +182,7 @@ void setup() {
         handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            const auto [res, val] = handlePut(request, data, len, index, total);
             if (!res)
                 return;
 
@@ -129,7 +199,7 @@ void setup() {
         handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            const auto [res, val] = handlePut(request, data, len, index, total);
             if (!res)
                 return;
 
@@ -146,7 +216,7 @@ void setup() {
         handleOptions,
         NULL,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            const auto [ res, val ] = handlePut(request, data, len, index, total);
+            const auto [res, val] = handlePut(request, data, len, index, total);
             if (!res)
                 return;
 
@@ -207,9 +277,9 @@ void setup() {
 
 void displayFrame(uint8_t frameIdx) {
     setAllLEDs(CRGB::Black, _leds, NUM_LEDS);
-    for (uint8_t y = 0; y < 8; ++y) {
-        for (uint8_t x = 0; x < 8; ++x) {
-            auto idx = y * 8 + x;
+    for (uint8_t y = 0; y < MATRIX_HEIGHT; ++y) {
+        for (uint8_t x = 0; x < MATRIX_WIDTH; ++x) {
+            auto idx = y * MATRIX_WIDTH + x;
             _leds[xy(x, y)] = CRGB(iconData[frameIdx].frameData[(idx * 3) + 0], iconData[frameIdx].frameData[(idx * 3) + 1], iconData[frameIdx].frameData[(idx * 3) + 2]);
         }
     }
@@ -220,7 +290,11 @@ void loop() {
     static uint8_t currentFrame = 0;
     static bool alreadyCleared = false;
 
+    events();  // ezTime's event handling
+    Cron.delay();
+
     if (newData) {
+        Serial.println("Local time: " + tz.dateTime());
         uint32_t idx = 0;
         numFrames = receiveBuffer[idx++];
 
