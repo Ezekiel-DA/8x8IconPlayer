@@ -1,5 +1,12 @@
 # ESP32 firmware to display 8x8 icons coming from IconViewer web app
 
+## Setup
+
+* Build and upload with Platform.IO
+* Provision with Espressif BLE provisioning app for Android or iOS
+
+If reprovisioning is needed: hold boot button (GPIO0) for 5 seconds to clear wifi credentials.
+
 ## APIs
 
 All of these should respond to `OPTIONS` correctly and support CORS (from any origin)`.

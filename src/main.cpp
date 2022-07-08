@@ -9,6 +9,11 @@
 #include <WiFiProv.h>
 #include <ezTime.h>
 #include <time.h>
+#include <AceButton.h>
+using namespace ace_button;
+
+#include <esp_wifi.h>
+#include <esp_system.h>
 
 #include <string>
 #include <tuple>
@@ -32,9 +37,24 @@ uint8_t numFrames = 0;
 bool newData = false;
 bool isDataPresent = false;
 
+const int BOOT_BUTTON_PIN = 0;
+AceButton button(BOOT_BUTTON_PIN);
 CRGB _leds[NUM_LEDS];
 Timezone tz;
 AsyncWebServer server(80);
+
+void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
+    switch (eventType) {
+        case AceButton::kEventLongPressed:
+            Serial.println("!!CLEARING WIFI CREDENTIALS AND REBOOTING!!");
+            esp_wifi_restore();
+            delay(1000);
+            esp_restart();
+            break;
+        default:
+            break;
+    }
+}
 
 void handleOptions(AsyncWebServerRequest* request) {
     if (request->method() == HTTP_OPTIONS) {
@@ -68,6 +88,11 @@ std::tuple<bool, uint8_t> handlePut(AsyncWebServerRequest* request, uint8_t* dat
 void setup() {
     Serial.begin(115200);
 
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    button.getButtonConfig()->setFeature(ButtonConfig::kFeatureLongPress);
+    button.getButtonConfig()->setLongPressDelay(1000*5);
+    button.setEventHandler(handleEvent);
+
     FastLED.addLeds<WS2812B, WORD_LEDS_PIN, GRB>(_leds, NUM_LEDS);
     FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
     FastLED.setBrightness(255);
@@ -79,6 +104,7 @@ void setup() {
 
     while (WiFi.status() != WL_CONNECTED) {
         delay(50);
+        button.check();
     }
 
     if (!MDNS.begin(iconViewerDNSName)) {
@@ -113,8 +139,6 @@ void setup() {
 
     setAllLEDs(CRGB::Black, _leds, NUM_LEDS);
     FastLED.show();
-
-    pinMode(0, INPUT);
 
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
@@ -290,6 +314,7 @@ void loop() {
     static uint8_t currentFrame = 0;
     static bool alreadyCleared = false;
 
+    button.check();
     events();  // ezTime's event handling
     Cron.delay();
 
